@@ -1,0 +1,95 @@
+# Every push to main: test on Linux/macOS/Windows, pick the next version from
+# the commit messages, tag it, build all binaries and publish a GitHub Release.
+#
+# Version rules (.github/scripts/next-version.sh):
+#   fix:/chore:/anything -> patch   feat: -> minor   feat!: or BREAKING CHANGE -> major
+# Skip a release: put [skip release] in the commit message, or change only docs.
+# Manual run: Actions -> release -> Run workflow (choose the bump).
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
+      - "LICENSE"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+
+permissions:
+  contents: write
+
+# One release at a time, in push order.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go build ./cmd/ppm
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history and tags for versioning and release notes
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Pick version
+        id: version
+        run: |
+          tag=$(sh .github/scripts/next-version.sh "${{ inputs.bump || 'auto' }}")
+          if [ -z "$tag" ]; then
+            echo "No new commits since the last release; nothing to do."
+          else
+            echo "Releasing $tag"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag
+        if: steps.version.outputs.tag != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "ppm ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Build and publish
+        if: steps.version.outputs.tag != ''
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Only needed for the optional Homebrew/Scoop sections in .goreleaser.yaml
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+
+      - name: Remove tag if the release failed
+        if: failure() && steps.version.outputs.tag != ''
+        run: git push --delete origin "${{ steps.version.outputs.tag }}" || true

@@ -1,0 +1,151 @@
+# Builds every binary and publishes the GitHub Release. Run by
+# .github/workflows/release.yml after it tags a new version on main.
+# Docs: https://goreleaser.com
+# Try locally: goreleaser check && goreleaser release --snapshot --clean
+version: 2
+
+project_name: ppm
+
+before:
+  hooks:
+    - go run ./tools/gendocs
+    - sh -c 'gzip -9nkf man/*.1'
+
+builds:
+  - main: ./cmd/ppm
+    binary: ppm
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/rahulcodepython/PPM/internal/cli.version={{.Version}}
+      - -X github.com/rahulcodepython/PPM/internal/cli.commit={{.ShortCommit}}
+      - -X github.com/rahulcodepython/PPM/internal/cli.date={{.Date}}
+
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      - THIRD_PARTY_NOTICES.md
+      - CHANGELOG.md
+      - man/*.1
+      - completions/*
+
+checksum:
+  name_template: checksums.txt
+
+# .deb, .rpm and .apk packages attached to each GitHub release.
+nfpms:
+  - package_name: ppm
+    file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Arch }}"
+    vendor: Rahul Das
+    maintainer: Rahul Das <rahulcodepython@gmail.com>
+    homepage: https://github.com/rahulcodepython/PPM
+    description: |-
+      Python project manager in a single binary.
+      Scaffolds projects, manages virtual environments and dependencies
+      (pip or uv) and runs project scripts with .env loaded.
+    license: MIT
+    section: devel
+    formats: [deb, rpm, apk]
+    recommends: [python3, git]
+    contents:
+      - src: man/*.1.gz
+        dst: /usr/share/man/man1/
+      - src: completions/ppm.bash
+        dst: /usr/share/bash-completion/completions/ppm
+      - src: completions/ppm.zsh
+        dst: /usr/share/zsh/site-functions/_ppm
+      - src: completions/ppm.fish
+        dst: /usr/share/fish/vendor_completions.d/ppm.fish
+      - src: LICENSE
+        dst: /usr/share/doc/ppm/copyright
+      - src: THIRD_PARTY_NOTICES.md
+        dst: /usr/share/doc/ppm/THIRD_PARTY_NOTICES.md
+
+release:
+  github:
+    owner: rahulcodepython
+    name: PPM
+  name_template: "ppm {{ .Tag }}"
+  prerelease: auto
+  header: |
+    ## Install ppm {{ .Tag }}
+
+    The installer puts `ppm` in the standard location and adds it to your PATH,
+    so it works from any terminal (open a new one after installing).
+
+    **Linux / macOS** (installs to `~/.local/bin`)
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/rahulcodepython/PPM/main/install.sh | PPM_VERSION={{ .Tag }} sh
+    ```
+
+    **Windows, PowerShell** (installs to `%LOCALAPPDATA%\Programs\ppm`)
+    ```powershell
+    $env:PPM_VERSION="{{ .Tag }}"; irm https://raw.githubusercontent.com/rahulcodepython/PPM/main/install.ps1 | iex
+    ```
+
+    **Debian / Ubuntu, Fedora / RHEL, Alpine:** download the package for your CPU below, then
+    `sudo apt install ./ppm_{{ .Version }}_amd64.deb`, `sudo dnf install ./ppm_{{ .Version }}_amd64.rpm`
+    or `sudo apk add --allow-untrusted ./ppm_{{ .Version }}_amd64.apk`.
+
+    **Manual:** download the `.tar.gz` / `.zip` for your system, extract it and run
+    `./ppm self install` (Windows: `.\ppm.exe self install`). It copies itself to the
+    standard location and sets PATH.
+
+    | System | File |
+    | --- | --- |
+    | Windows 64-bit | `ppm_windows_amd64.zip` |
+    | Windows on ARM | `ppm_windows_arm64.zip` |
+    | macOS Apple Silicon (M1 and later) | `ppm_darwin_arm64.tar.gz` |
+    | macOS Intel | `ppm_darwin_amd64.tar.gz` |
+    | Linux 64-bit | `ppm_linux_amd64.tar.gz` |
+    | Linux ARM64 (Raspberry Pi 4+, Graviton) | `ppm_linux_arm64.tar.gz` |
+
+    Already installed? Run `ppm self update`. Check a download with `checksums.txt` (SHA-256).
+
+    ## Changes
+  footer: |
+    ---
+    Docs: [README](https://github.com/rahulcodepython/PPM#readme) · [User manual](https://github.com/rahulcodepython/PPM/blob/main/docs/USAGE.md)
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:", "^ci:"]
+
+# Optional: `brew install` and `scoop install`. Each needs its own public
+# repo and a token secret; see docs/PUBLISHING.md before uncommenting.
+#
+# homebrew_casks:
+#   - name: ppm
+#     repository:
+#       owner: rahulcodepython
+#       name: homebrew-tap
+#       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+#     homepage: https://github.com/rahulcodepython/PPM
+#     description: Python project manager in a single binary
+#     license: MIT
+#     manpages: [man/ppm.1.gz]
+#     completions:
+#       bash: completions/ppm.bash
+#       zsh: completions/ppm.zsh
+#       fish: completions/ppm.fish
+#
+# scoops:
+#   - name: ppm
+#     repository:
+#       owner: rahulcodepython
+#       name: scoop-bucket
+#       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+#     homepage: https://github.com/rahulcodepython/PPM
+#     description: Python project manager in a single binary
+#     license: MIT
